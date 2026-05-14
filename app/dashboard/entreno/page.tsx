@@ -1,0 +1,351 @@
+'use client'
+
+import { useEffect, useState, useRef } from 'react'
+import { createClient } from '@/lib/supabase'
+import { useRouter } from 'next/navigation'
+import { Play, Pause, RotateCcw, Check, X, ChevronRight } from 'lucide-react'
+
+const WEEK_PLAN = [
+  { day: 'Lun', name: 'Espalda + Bíceps', type: 'Fuerza', gym: true, dur: 60 },
+  { day: 'Mar', name: 'Indoor Cycling', type: 'Cardio', gym: false, dur: 45 },
+  { day: 'Mié', name: 'Piernas + Glúteos', type: 'Fuerza', gym: true, dur: 70 },
+  { day: 'Jue', name: 'Indoor Cycling', type: 'Cardio', gym: false, dur: 45 },
+  { day: 'Vie', name: 'Pecho + Hombros', type: 'Fuerza', gym: true, dur: 60 },
+  { day: 'Sáb', name: 'LISS + Core', type: 'Cardio', gym: false, dur: 50 },
+  { day: 'Dom', name: 'Descanso activo', type: 'Descanso', gym: false, dur: 0, rest: true },
+]
+
+const EXERCISES: Record<string, any[]> = {
+  'Espalda + Bíceps': [
+    { name: 'Jalón al pecho agarre ancho', sets: 4, reps: '10-12', weight: 30 },
+    { name: 'Remo con mancuerna unilateral', sets: 3, reps: '12-15', weight: 10 },
+    { name: 'Remo en polea sentada', sets: 3, reps: '12-15', weight: 25 },
+    { name: 'Curl de bíceps mancuerna', sets: 3, reps: '12-15', weight: 8 },
+  ],
+  'Piernas + Glúteos': [
+    { name: 'Sentadilla libre o goblet', sets: 4, reps: '10-12', weight: 30 },
+    { name: 'Hip Thrust', sets: 4, reps: '12-15', weight: 40 },
+    { name: 'Peso muerto rumano', sets: 3, reps: '12-15', weight: 30 },
+    { name: 'Abducción en máquina', sets: 3, reps: '15-20', weight: 30 },
+  ],
+  'Pecho + Hombros': [
+    { name: 'Press de pecho mancuernas', sets: 4, reps: '10-12', weight: 10 },
+    { name: 'Press hombro mancuerna', sets: 4, reps: '10-12', weight: 8 },
+    { name: 'Elevaciones laterales', sets: 4, reps: '15-20', weight: 5 },
+    { name: 'Face pull polea', sets: 3, reps: '15-20', weight: 15 },
+  ],
+}
+
+function today() { return new Date().toISOString().split('T')[0] }
+
+export default function Entreno() {
+  const [profile, setProfile] = useState<any>(null)
+  const [curDay, setCurDay] = useState(0)
+  const [exStates, setExStates] = useState<any[]>([])
+  const [timer, setTimer] = useState(120)
+  const [timerOn, setTimerOn] = useState(false)
+  const [timerMax, setTimerMax] = useState(120)
+  const [finished, setFinished] = useState(false)
+  const [userId, setUserId] = useState('')
+  const timerRef = useRef<any>(null)
+  const router = useRouter()
+
+  useEffect(() => {
+    const supabase = createClient()
+    supabase.auth.getUser().then(async ({ data }) => {
+      if (!data.user) { router.push('/login'); return }
+      setUserId(data.user.id)
+      const { data: prof } = await supabase.from('profiles').select('*').eq('id', data.user.id).single()
+      setProfile(prof)
+      const dow = new Date().getDay()
+      const mapped = [6, 0, 1, 2, 3, 4, 5][dow]
+      setCurDay(mapped)
+      initExercises(mapped)
+    })
+  }, [])
+
+  function initExercises(dayIdx: number) {
+    const day = WEEK_PLAN[dayIdx]
+    const exs = EXERCISES[day.name] || []
+    setExStates(exs.map(ex => ({
+      ...ex,
+      sets: Array(ex.sets).fill(null).map(() => ({ done: false, skip: false, weight: ex.weight }))
+    })))
+    setFinished(false)
+  }
+
+  function selectDay(i: number) {
+    setCurDay(i)
+    initExercises(i)
+    stopTimer()
+  }
+
+  function tapSet(exIdx: number, setIdx: number) {
+    setExStates(prev => {
+      const updated = JSON.parse(JSON.stringify(prev))
+      const s = updated[exIdx].sets[setIdx]
+      if (!s.done && !s.skip) { s.done = true; startTimer() }
+      else if (s.done) { s.done = false; s.skip = true }
+      else { s.skip = false }
+      return updated
+    })
+  }
+
+  function updateWeight(exIdx: number, val: number) {
+    setExStates(prev => {
+      const updated = JSON.parse(JSON.stringify(prev))
+      updated[exIdx].weight = val
+      updated[exIdx].sets.forEach((s: any) => s.weight = val)
+      return updated
+    })
+  }
+
+  function startTimer() {
+    stopTimer()
+    setTimerOn(true)
+    timerRef.current = setInterval(() => {
+      setTimer(t => {
+        if (t <= 1) { stopTimer(); return 0 }
+        return t - 1
+      })
+    }, 1000)
+  }
+
+  function stopTimer() {
+    clearInterval(timerRef.current)
+    setTimerOn(false)
+  }
+
+  function resetTimer() {
+    stopTimer()
+    setTimer(timerMax)
+  }
+
+  function setTimerPreset(s: number) {
+    setTimerMax(s)
+    setTimer(s)
+    stopTimer()
+  }
+
+  async function finishWorkout() {
+    const vol = exStates.reduce((a, ex) =>
+      a + ex.sets.filter((s: any) => s.done).reduce((b: number, s: any) => b + s.weight * parseInt(ex.reps), 0), 0)
+    const done = exStates.reduce((a, ex) => a + ex.sets.filter((s: any) => s.done).length, 0)
+    const total = exStates.reduce((a, ex) => a + ex.sets.length, 0)
+    const supabase = createClient()
+    await supabase.from('workout_logs').upsert({
+      user_id: userId, date: today(),
+      name: WEEK_PLAN[curDay].name,
+      volume: vol, sets_done: done, sets_total: total, rpe: 7,
+    }, { onConflict: 'user_id,date' })
+    stopTimer()
+    setFinished(true)
+  }
+
+  const day = WEEK_PLAN[curDay]
+  const m = Math.floor(timer / 60), s = timer % 60
+  const timerPct = (timer / timerMax) * 100
+
+  if (!profile) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100dvh', color: '#9A9690', fontSize: 14 }}>Cargando...</div>
+
+  return (
+    <div style={{ padding: '32px 28px', maxWidth: 800 }}>
+
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 12, color: '#9A9690', marginBottom: 4, fontWeight: 500 }}>Entrenamiento</div>
+        <div style={{ fontSize: 26, fontWeight: 700, color: '#1A1916', letterSpacing: -0.8 }}>Sesión de hoy</div>
+      </div>
+
+      {/* Week pills */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 20, overflowX: 'auto' as const, paddingBottom: 4 }}>
+        {WEEK_PLAN.map((d, i) => (
+          <div key={i} onClick={() => selectDay(i)} style={{
+            flexShrink: 0, padding: '8px 14px', borderRadius: 10, cursor: 'pointer',
+            background: i === curDay ? '#1A1916' : '#FFFFFF',
+            border: `1.5px solid ${i === curDay ? 'transparent' : 'rgba(0,0,0,0.08)'}`,
+            transition: 'all 0.15s',
+          }}>
+            <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase' as const, color: i === curDay ? 'rgba(255,255,255,0.5)' : '#9A9690', letterSpacing: 0.4 }}>{d.day}</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: i === curDay ? '#FFFFFF' : '#1A1916', marginTop: 2 }}>{i + 1}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Session card */}
+      <div style={{ background: '#FFFFFF', borderRadius: 18, padding: '20px', marginBottom: 16, boxShadow: '0 2px 12px rgba(0,0,0,0.07)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: 0.5, color: '#FF9F0A', marginBottom: 4 }}>
+              {day.type}
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: '#1A1916' }}>{day.name}</div>
+            <div style={{ fontSize: 12, color: '#9A9690', marginTop: 2 }}>{day.rest ? 'Descanso' : `~${day.dur} min`}</div>
+          </div>
+          {finished && (
+            <div style={{ background: '#30D158', borderRadius: 10, padding: '6px 12px', fontSize: 12, fontWeight: 700, color: '#FFFFFF' }}>
+              ✓ Completado
+            </div>
+          )}
+        </div>
+
+        {/* Timer */}
+        {!day.rest && (
+          <div style={{ background: '#F5F2EE', borderRadius: 14, padding: '16px', marginBottom: 16 }}>
+            <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: 0.5, color: '#9A9690', textAlign: 'center' as const, marginBottom: 10 }}>
+              Descanso entre series
+            </div>
+            {/* Timer ring */}
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
+              <div style={{ position: 'relative', width: 80, height: 80 }}>
+                <svg width="80" height="80" style={{ transform: 'rotate(-90deg)' }}>
+                  <circle cx="40" cy="40" r="34" fill="none" stroke="rgba(0,0,0,0.08)" strokeWidth="5" />
+                  <circle cx="40" cy="40" r="34" fill="none"
+                    stroke={timer <= 10 ? '#FF453A' : '#FF9F0A'} strokeWidth="5"
+                    strokeLinecap="round"
+                    strokeDasharray={`${2 * Math.PI * 34}`}
+                    strokeDashoffset={`${2 * Math.PI * 34 * (1 - timerPct / 100)}`}
+                    style={{ transition: 'stroke-dashoffset 1s linear, stroke 0.3s' }}
+                  />
+                </svg>
+                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span style={{ fontSize: 18, fontWeight: 700, color: timer <= 10 ? '#FF453A' : '#1A1916', letterSpacing: -1 }}>
+                    {m}:{s < 10 ? '0' + s : s}
+                  </span>
+                </div>
+              </div>
+            </div>
+            {/* Controls */}
+            <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginBottom: 10 }}>
+              {[60, 90, 120, 180].map(sec => (
+                <div key={sec} onClick={() => setTimerPreset(sec)} style={{
+                  padding: '6px 12px', borderRadius: 8, cursor: 'pointer', fontSize: 11, fontWeight: 600,
+                  background: timerMax === sec ? '#1A1916' : '#FFFFFF',
+                  color: timerMax === sec ? '#FFFFFF' : '#6B6762',
+                  border: '1px solid rgba(0,0,0,0.08)',
+                }}>
+                  {sec < 60 ? sec + 's' : sec / 60 + 'min'}
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+              <div onClick={timerOn ? stopTimer : startTimer} style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '9px 20px', borderRadius: 10, cursor: 'pointer',
+                background: '#1A1916', color: '#FFFFFF', fontSize: 13, fontWeight: 600,
+              }}>
+                {timerOn ? <Pause size={14} /> : <Play size={14} />}
+                {timerOn ? 'Pausar' : 'Iniciar'}
+              </div>
+              <div onClick={resetTimer} style={{
+                padding: '9px 14px', borderRadius: 10, cursor: 'pointer',
+                background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.08)',
+              }}>
+                <RotateCcw size={14} color="#6B6762" />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Exercises */}
+      {!day.rest && day.gym && exStates.map((ex, exIdx) => {
+        const allDone = ex.sets.every((s: any) => s.done)
+        return (
+          <div key={exIdx} style={{
+            background: '#FFFFFF', borderRadius: 18, padding: '18px 20px', marginBottom: 12,
+            boxShadow: '0 2px 12px rgba(0,0,0,0.07)',
+            border: `1.5px solid ${allDone ? '#FF9F0A' : 'transparent'}`,
+            transition: 'border-color 0.3s',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: '#1A1916' }}>{ex.name}</div>
+                <div style={{ fontSize: 12, color: '#9A9690', marginTop: 2 }}>{ex.sets.length} series · {ex.reps} reps</div>
+              </div>
+              {allDone && <div style={{ fontSize: 11, fontWeight: 700, color: '#FF9F0A' }}>✓ Listo</div>}
+            </div>
+
+            {/* Sets */}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const, marginBottom: 12 }}>
+              {ex.sets.map((set: any, setIdx: number) => (
+                <div key={setIdx} onClick={() => tapSet(exIdx, setIdx)} style={{
+                  padding: '10px 14px', borderRadius: 10, cursor: 'pointer',
+                  background: set.done ? '#FF9F0A' : set.skip ? 'rgba(255,69,58,0.1)' : '#F5F2EE',
+                  border: `1px solid ${set.done ? 'transparent' : set.skip ? 'rgba(255,69,58,0.2)' : 'rgba(0,0,0,0.06)'}`,
+                  transition: 'all 0.15s', textAlign: 'center' as const, minWidth: 56,
+                }}>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: set.done ? '#FFFFFF' : '#9A9690' }}>S{setIdx + 1}</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: set.done ? '#FFFFFF' : '#1A1916', marginTop: 2 }}>
+                    {set.weight}×{ex.reps.split('-')[0]}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Weight input */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 12, color: '#9A9690' }}>Peso:</span>
+              <input
+                type="number"
+                step="2.5"
+                value={ex.weight}
+                onChange={e => updateWeight(exIdx, +e.target.value)}
+                style={{
+                  width: 70, padding: '6px 10px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+                  border: '1px solid rgba(0,0,0,0.08)', outline: 'none', background: '#F5F2EE',
+                  fontFamily: '-apple-system, sans-serif', color: '#1A1916',
+                }}
+              />
+              <span style={{ fontSize: 12, color: '#9A9690' }}>kg</span>
+              {allDone && (
+                <span style={{ fontSize: 11, color: '#9A9690', marginLeft: 4 }}>
+                  → próx: <strong style={{ color: '#FF9F0A' }}>{+(ex.weight + 2.5).toFixed(1)} kg</strong>
+                </span>
+              )}
+            </div>
+          </div>
+        )
+      })}
+
+      {/* Cardio */}
+      {!day.rest && !day.gym && (
+        <div style={{ background: '#FFFFFF', borderRadius: 18, padding: '24px', boxShadow: '0 2px 12px rgba(0,0,0,0.07)', textAlign: 'center' as const }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>🚴</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: '#1A1916', marginBottom: 4 }}>{day.name}</div>
+          <div style={{ fontSize: 13, color: '#9A9690' }}>Cardio · Zona 2-3 · 65-75% FC máx · {day.dur} min</div>
+        </div>
+      )}
+
+      {/* Rest */}
+      {day.rest && (
+        <div style={{ background: '#FFFFFF', borderRadius: 18, padding: '24px', boxShadow: '0 2px 12px rgba(0,0,0,0.07)', textAlign: 'center' as const }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>🧘</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: '#1A1916', marginBottom: 4 }}>Descanso activo</div>
+          <div style={{ fontSize: 13, color: '#9A9690' }}>Movilidad · stretching · caminata tranquila</div>
+        </div>
+      )}
+
+      {/* Finish button */}
+      {!day.rest && !finished && (
+        <div onClick={finishWorkout} style={{
+          marginTop: 16, padding: '15px', borderRadius: 14, cursor: 'pointer',
+          background: '#1A1916', color: '#FFFFFF', fontSize: 14, fontWeight: 700,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+        }}>
+          <Check size={16} />
+          Terminar sesión
+        </div>
+      )}
+
+      {finished && (
+        <div style={{ marginTop: 16, background: 'rgba(48,209,88,0.08)', border: '1.5px solid rgba(48,209,88,0.2)', borderRadius: 14, padding: '16px 20px', textAlign: 'center' as const }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: '#30D158', marginBottom: 4 }}>🎉 ¡Sesión completada!</div>
+          <div style={{ fontSize: 12, color: '#6B6762' }}>
+            {exStates.filter(ex => ex.sets.every((s: any) => s.done)).map(ex => `📈 ${ex.name}: ${+(ex.weight + 2.5).toFixed(1)}kg próx semana`).join(' · ')}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
