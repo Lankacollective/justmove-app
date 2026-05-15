@@ -12,6 +12,7 @@ export default function CoachPanel() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [macrosSaved, setMacrosSaved] = useState(false)
   const [isCoach, setIsCoach] = useState(false)
   const [expandedMeal, setExpandedMeal] = useState<string | null>(null)
   const router = useRouter()
@@ -76,6 +77,18 @@ export default function CoachPanel() {
     setSaved(true)
     setTimeout(() => setSaved(false), 2500)
   }
+
+  async function saveMacros() {
+  const supabase = createClient()
+  await supabase.from('profiles').update({
+    target_cal: selectedUser.target_cal,
+    prot: selectedUser.prot,
+    carbs: selectedUser.carbs,
+    fat: selectedUser.fat,
+  }).eq('id', selectedUser.id)
+  setMacrosSaved(true)
+  setTimeout(() => setMacrosSaved(false), 2500)
+}
 
   function updateItem(mealIdx: number, itemIdx: number, field: string, value: any) {
     const updated = JSON.parse(JSON.stringify(meals))
@@ -201,6 +214,55 @@ export default function CoachPanel() {
               </div>
             ))}
           </div>
+
+{/* Macros editor */}
+<div style={{
+  background: '#FFFFFF', borderRadius: 18, padding: '20px',
+  marginBottom: 16, boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+  border: '1px solid rgba(0,0,0,0.06)',
+}}>
+  <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: 0.5, color: '#9A9690', marginBottom: 16 }}>
+    Ajustar macros
+  </div>
+  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10 }}>
+    {[
+      { label: 'Calorías', field: 'target_cal' },
+      { label: 'Proteína (g)', field: 'prot' },
+      { label: 'Carbos (g)', field: 'carbs' },
+      { label: 'Grasa (g)', field: 'fat' },
+    ].map((m, i) => (
+      <div key={i}>
+        <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: 0.4, color: '#9A9690', marginBottom: 6 }}>
+          {m.label}
+        </div>
+        <input
+          type="number"
+          value={selectedUser?.[m.field] || ''}
+          onChange={e => setSelectedUser((u: any) => ({ ...u, [m.field]: +e.target.value }))}
+          style={{
+            width: '100%', padding: '10px 12px', borderRadius: 10,
+            border: '1.5px solid rgba(0,0,0,0.08)', fontSize: 15, fontWeight: 700,
+            outline: 'none', background: '#F5F2EE', color: '#1A1916',
+            fontFamily: '-apple-system, sans-serif',
+          }}
+          onFocus={e => e.target.style.borderColor = '#FF9F0A'}
+          onBlur={e => e.target.style.borderColor = 'rgba(0,0,0,0.08)'}
+        />
+      </div>
+    ))}
+  </div>
+  <div
+    onClick={saveMacros}
+    style={{
+      marginTop: 14, padding: '12px', borderRadius: 12, cursor: 'pointer',
+      background: macrosSaved ? '#30D158' : '#FF9F0A',
+      fontSize: 13, fontWeight: 700, color: '#FFFFFF',
+      textAlign: 'center' as const, transition: 'all 0.3s',
+    }}
+  >
+    {macrosSaved ? '✓ Macros guardados' : `Guardar macros de ${selectedUser?.name?.split(' ')[0]}`}
+  </div>
+</div>
 
           {/* Meals */}
           {meals.map((meal, mealIdx) => {
