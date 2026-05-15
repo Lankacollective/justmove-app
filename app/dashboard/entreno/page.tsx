@@ -3,7 +3,8 @@
 import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import { Play, Pause, RotateCcw, Check, X, ChevronRight } from 'lucide-react'
+import { Play, Pause, RotateCcw, Check, Plus, X } from 'lucide-react'
+import { today, getRealDayIndex } from '@/lib/store'
 
 const WEEK_PLAN = [
   { day: 'Lun', name: 'Espalda + Bíceps', type: 'Fuerza', gym: true, dur: 60 },
@@ -36,7 +37,16 @@ const EXERCISES: Record<string, any[]> = {
   ],
 }
 
-function today() { return new Date().toISOString().split('T')[0] }
+const ACTIVITY_TYPES = [
+  { name: 'Running', icon: '🏃', calsPerMin: 10 },
+  { name: 'Indoor Cycling', icon: '🚴', calsPerMin: 9 },
+  { name: 'Yoga', icon: '🧘', calsPerMin: 4 },
+  { name: 'Pádel', icon: '🎾', calsPerMin: 8 },
+  { name: 'Natación', icon: '🏊', calsPerMin: 11 },
+  { name: 'Funcional', icon: '⚡', calsPerMin: 8 },
+  { name: 'Caminata', icon: '🚶', calsPerMin: 5 },
+  { name: 'Otro', icon: '🏅', calsPerMin: 7 },
+]
 
 export default function Entreno() {
   const [profile, setProfile] = useState<any>(null)
@@ -47,6 +57,9 @@ export default function Entreno() {
   const [timerMax, setTimerMax] = useState(120)
   const [finished, setFinished] = useState(false)
   const [userId, setUserId] = useState('')
+  const [showFreeActivity, setShowFreeActivity] = useState(false)
+  const [freeActivity, setFreeActivity] = useState({ type: 'Running', duration: 30, distance: 0, notes: '' })
+  const [savedActivity, setSavedActivity] = useState<any>(null)
   const timerRef = useRef<any>(null)
   const router = useRouter()
 
@@ -57,10 +70,18 @@ export default function Entreno() {
       setUserId(data.user.id)
       const { data: prof } = await supabase.from('profiles').select('*').eq('id', data.user.id).single()
       setProfile(prof)
-      const dow = new Date().getDay()
-      const mapped = [6, 0, 1, 2, 3, 4, 5][dow]
-      setCurDay(mapped)
-      initExercises(mapped)
+      const realDay = getRealDayIndex()
+      setCurDay(realDay)
+      initExercises(realDay)
+
+      // Cargar workout del día
+      const { data: wlog } = await supabase
+        .from('workout_logs').select('*')
+        .eq('user_id', data.user.id).eq('date', today()).single()
+      if (wlog) {
+        setFinished(true)
+        if (wlog.name && !EXERCISES[wlog.name]) setSavedActivity(wlog)
+      }
     })
   }, [])
 
@@ -72,6 +93,7 @@ export default function Entreno() {
       sets: Array(ex.sets).fill(null).map(() => ({ done: false, skip: false, weight: ex.weight }))
     })))
     setFinished(false)
+    setSavedActivity(null)
   }
 
   function selectDay(i: number) {
@@ -104,49 +126,57 @@ export default function Entreno() {
     stopTimer()
     setTimerOn(true)
     timerRef.current = setInterval(() => {
-      setTimer(t => {
-        if (t <= 1) { stopTimer(); return 0 }
-        return t - 1
-      })
+      setTimer(t => { if (t <= 1) { stopTimer(); return 0 } return t - 1 })
     }, 1000)
   }
 
-  function stopTimer() {
-    clearInterval(timerRef.current)
-    setTimerOn(false)
-  }
-
-  function resetTimer() {
-    stopTimer()
-    setTimer(timerMax)
-  }
-
-  function setTimerPreset(s: number) {
-    setTimerMax(s)
-    setTimer(s)
-    stopTimer()
-  }
+  function stopTimer() { clearInterval(timerRef.current); setTimerOn(false) }
+  function resetTimer() { stopTimer(); setTimer(timerMax) }
+  function setTimerPreset(s: number) { setTimerMax(s); setTimer(s); stopTimer() }
 
   async function finishWorkout() {
     const vol = exStates.reduce((a, ex) =>
       a + ex.sets.filter((s: any) => s.done).reduce((b: number, s: any) => b + s.weight * parseInt(ex.reps), 0), 0)
     const done = exStates.reduce((a, ex) => a + ex.sets.filter((s: any) => s.done).length, 0)
     const total = exStates.reduce((a, ex) => a + ex.sets.length, 0)
+    const cals = Math.round(vol * 0.05 + done * 8)
     const supabase = createClient()
     await supabase.from('workout_logs').upsert({
       user_id: userId, date: today(),
       name: WEEK_PLAN[curDay].name,
       volume: vol, sets_done: done, sets_total: total, rpe: 7,
+      calories_burned: cals,
     }, { onConflict: 'user_id,date' })
     stopTimer()
+    setFinished(true)
+  }
+
+  async function saveFreeActivity() {
+    const act = ACTIVITY_TYPES.find(a => a.name === freeActivity.type)
+    const cals = Math.round((act?.calsPerMin || 7) * freeActivity.duration)
+    const supabase = createClient()
+    await supabase.from('workout_logs').upsert({
+      user_id: userId, date: today(),
+      name: freeActivity.type,
+      volume: 0, sets_done: 0, sets_total: 0, rpe: 7,
+      calories_burned: cals,
+      completed_sets: { duration: freeActivity.duration, distance: freeActivity.distance, notes: freeActivity.notes },
+    }, { onConflict: 'user_id,date' })
+    setSavedActivity({ name: freeActivity.type, calories_burned: cals, duration: freeActivity.duration })
+    setShowFreeActivity(false)
     setFinished(true)
   }
 
   const day = WEEK_PLAN[curDay]
   const m = Math.floor(timer / 60), s = timer % 60
   const timerPct = (timer / timerMax) * 100
+  const realDayIdx = getRealDayIndex()
 
-  if (!profile) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100dvh', color: '#9A9690', fontSize: 14 }}>Cargando...</div>
+  if (!profile) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100dvh', color: '#9A9690', fontSize: 14 }}>
+      Cargando...
+    </div>
+  )
 
   return (
     <div style={{ padding: '32px 28px', maxWidth: 800 }}>
@@ -154,47 +184,153 @@ export default function Entreno() {
       <div style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 12, color: '#9A9690', marginBottom: 4, fontWeight: 500 }}>Entrenamiento</div>
         <div style={{ fontSize: 26, fontWeight: 700, color: '#1A1916', letterSpacing: -0.8 }}>Sesión de hoy</div>
+        <div style={{ fontSize: 13, color: '#6B6762', marginTop: 2 }}>
+          {new Date().toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long' })}
+        </div>
       </div>
 
-      {/* Week pills */}
+      {/* Week pills — con día real marcado */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 20, overflowX: 'auto' as const, paddingBottom: 4 }}>
-        {WEEK_PLAN.map((d, i) => (
-          <div key={i} onClick={() => selectDay(i)} style={{
-            flexShrink: 0, padding: '8px 14px', borderRadius: 10, cursor: 'pointer',
-            background: i === curDay ? '#1A1916' : '#FFFFFF',
-            border: `1.5px solid ${i === curDay ? 'transparent' : 'rgba(0,0,0,0.08)'}`,
-            transition: 'all 0.15s',
-          }}>
-            <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase' as const, color: i === curDay ? 'rgba(255,255,255,0.5)' : '#9A9690', letterSpacing: 0.4 }}>{d.day}</div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: i === curDay ? '#FFFFFF' : '#1A1916', marginTop: 2 }}>{i + 1}</div>
-          </div>
-        ))}
+        {WEEK_PLAN.map((d, i) => {
+          const isToday = i === realDayIdx
+          const isSelected = i === curDay
+          return (
+            <div key={i} onClick={() => selectDay(i)} style={{
+              flexShrink: 0, padding: '8px 14px', borderRadius: 10, cursor: 'pointer',
+              background: isSelected ? '#1A1916' : isToday ? '#FFF3E0' : '#FFFFFF',
+              border: `1.5px solid ${isSelected ? 'transparent' : isToday ? '#FF9F0A' : 'rgba(0,0,0,0.08)'}`,
+              transition: 'all 0.15s',
+            }}>
+              <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase' as const, color: isSelected ? 'rgba(255,255,255,0.5)' : isToday ? '#FF9F0A' : '#9A9690', letterSpacing: 0.4 }}>
+                {d.day}{isToday ? ' · HOY' : ''}
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: isSelected ? '#FFFFFF' : '#1A1916', marginTop: 2 }}>
+                {new Date(new Date().setDate(new Date().getDate() - realDayIdx + i)).getDate()}
+              </div>
+            </div>
+          )
+        })}
       </div>
+
+      {/* Actividad libre */}
+      {!finished && (
+        <div
+          onClick={() => setShowFreeActivity(!showFreeActivity)}
+          style={{
+            background: showFreeActivity ? '#1A1916' : '#FFFFFF',
+            borderRadius: 14, padding: '12px 16px', marginBottom: 16,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+            border: '1.5px solid rgba(0,0,0,0.06)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Plus size={16} color={showFreeActivity ? '#FF9F0A' : '#1A1916'} strokeWidth={2.5} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: showFreeActivity ? '#FFFFFF' : '#1A1916' }}>
+              Registrar otra actividad
+            </span>
+          </div>
+          <span style={{ fontSize: 11, color: showFreeActivity ? 'rgba(255,255,255,0.4)' : '#9A9690' }}>
+            yoga, running, pádel...
+          </span>
+        </div>
+      )}
+
+      {/* Free activity form */}
+      {showFreeActivity && (
+        <div style={{ background: '#FFFFFF', borderRadius: 18, padding: '20px', marginBottom: 16, boxShadow: '0 2px 12px rgba(0,0,0,0.07)' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#1A1916', marginBottom: 14 }}>¿Qué hiciste hoy?</div>
+
+          {/* Activity type */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const, marginBottom: 16 }}>
+            {ACTIVITY_TYPES.map((a, i) => (
+              <div key={i} onClick={() => setFreeActivity(f => ({ ...f, type: a.name }))} style={{
+                padding: '8px 12px', borderRadius: 10, cursor: 'pointer',
+                background: freeActivity.type === a.name ? '#1A1916' : '#F5F2EE',
+                border: `1.5px solid ${freeActivity.type === a.name ? 'transparent' : 'rgba(0,0,0,0.06)'}`,
+                fontSize: 12, fontWeight: 600,
+                color: freeActivity.type === a.name ? '#FFFFFF' : '#1A1916',
+              }}>
+                {a.icon} {a.name}
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 600, color: '#9A9690', textTransform: 'uppercase' as const, letterSpacing: 0.4, marginBottom: 6 }}>Duración (min)</div>
+              <input type="number" value={freeActivity.duration}
+                onChange={e => setFreeActivity(f => ({ ...f, duration: +e.target.value }))}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1.5px solid rgba(0,0,0,0.08)', fontSize: 15, fontWeight: 700, outline: 'none', background: '#F5F2EE', color: '#1A1916', fontFamily: '-apple-system, sans-serif' }}
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 600, color: '#9A9690', textTransform: 'uppercase' as const, letterSpacing: 0.4, marginBottom: 6 }}>Distancia (km)</div>
+              <input type="number" step="0.1" value={freeActivity.distance}
+                onChange={e => setFreeActivity(f => ({ ...f, distance: +e.target.value }))}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1.5px solid rgba(0,0,0,0.08)', fontSize: 15, fontWeight: 700, outline: 'none', background: '#F5F2EE', color: '#1A1916', fontFamily: '-apple-system, sans-serif' }}
+              />
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 10, fontWeight: 600, color: '#9A9690', textTransform: 'uppercase' as const, letterSpacing: 0.4, marginBottom: 6 }}>Notas (opcional)</div>
+            <input value={freeActivity.notes}
+              onChange={e => setFreeActivity(f => ({ ...f, notes: e.target.value }))}
+              placeholder="ej. buena sesión, sentí energía..."
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1.5px solid rgba(0,0,0,0.08)', fontSize: 13, outline: 'none', background: '#F5F2EE', color: '#1A1916', fontFamily: '-apple-system, sans-serif' }}
+            />
+          </div>
+
+          {/* Estimated cals */}
+          <div style={{ background: '#F5F2EE', borderRadius: 10, padding: '10px 14px', marginBottom: 14, display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 12, color: '#6B6762' }}>Calorías estimadas quemadas:</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: '#FF9F0A' }}>
+              ~{Math.round((ACTIVITY_TYPES.find(a => a.name === freeActivity.type)?.calsPerMin || 7) * freeActivity.duration)} kcal
+            </span>
+          </div>
+
+          <div onClick={saveFreeActivity} style={{
+            padding: '13px', borderRadius: 12, cursor: 'pointer',
+            background: '#FF9F0A', fontSize: 13, fontWeight: 700,
+            color: '#FFFFFF', textAlign: 'center' as const,
+          }}>
+            ✓ Guardar actividad
+          </div>
+        </div>
+      )}
+
+      {/* Saved free activity */}
+      {savedActivity && !EXERCISES[savedActivity.name] && (
+        <div style={{ background: 'rgba(48,209,88,0.08)', border: '1.5px solid rgba(48,209,88,0.2)', borderRadius: 14, padding: '16px 20px', marginBottom: 16 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: '#30D158', marginBottom: 4 }}>
+            ✓ {savedActivity.name} registrado
+          </div>
+          <div style={{ fontSize: 12, color: '#6B6762' }}>
+            {savedActivity.duration || freeActivity.duration} min · ~{savedActivity.calories_burned} kcal quemadas
+          </div>
+        </div>
+      )}
 
       {/* Session card */}
       <div style={{ background: '#FFFFFF', borderRadius: 18, padding: '20px', marginBottom: 16, boxShadow: '0 2px 12px rgba(0,0,0,0.07)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
           <div>
-            <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: 0.5, color: '#FF9F0A', marginBottom: 4 }}>
-              {day.type}
-            </div>
+            <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: 0.5, color: '#FF9F0A', marginBottom: 4 }}>{day.type}</div>
             <div style={{ fontSize: 20, fontWeight: 700, color: '#1A1916' }}>{day.name}</div>
             <div style={{ fontSize: 12, color: '#9A9690', marginTop: 2 }}>{day.rest ? 'Descanso' : `~${day.dur} min`}</div>
           </div>
           {finished && (
-            <div style={{ background: '#30D158', borderRadius: 10, padding: '6px 12px', fontSize: 12, fontWeight: 700, color: '#FFFFFF' }}>
-              ✓ Completado
-            </div>
+            <div style={{ background: '#30D158', borderRadius: 10, padding: '6px 12px', fontSize: 12, fontWeight: 700, color: '#FFFFFF' }}>✓ Completado</div>
           )}
         </div>
 
         {/* Timer */}
-        {!day.rest && (
+        {!day.rest && !finished && (
           <div style={{ background: '#F5F2EE', borderRadius: 14, padding: '16px', marginBottom: 16 }}>
             <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: 0.5, color: '#9A9690', textAlign: 'center' as const, marginBottom: 10 }}>
               Descanso entre series
             </div>
-            {/* Timer ring */}
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
               <div style={{ position: 'relative', width: 80, height: 80 }}>
                 <svg width="80" height="80" style={{ transform: 'rotate(-90deg)' }}>
@@ -214,7 +350,6 @@ export default function Entreno() {
                 </div>
               </div>
             </div>
-            {/* Controls */}
             <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginBottom: 10 }}>
               {[60, 90, 120, 180].map(sec => (
                 <div key={sec} onClick={() => setTimerPreset(sec)} style={{
@@ -236,10 +371,7 @@ export default function Entreno() {
                 {timerOn ? <Pause size={14} /> : <Play size={14} />}
                 {timerOn ? 'Pausar' : 'Iniciar'}
               </div>
-              <div onClick={resetTimer} style={{
-                padding: '9px 14px', borderRadius: 10, cursor: 'pointer',
-                background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.08)',
-              }}>
+              <div onClick={resetTimer} style={{ padding: '9px 14px', borderRadius: 10, cursor: 'pointer', background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.08)' }}>
                 <RotateCcw size={14} color="#6B6762" />
               </div>
             </div>
@@ -248,7 +380,7 @@ export default function Entreno() {
       </div>
 
       {/* Exercises */}
-      {!day.rest && day.gym && exStates.map((ex, exIdx) => {
+      {!day.rest && day.gym && !finished && exStates.map((ex, exIdx) => {
         const allDone = ex.sets.every((s: any) => s.done)
         return (
           <div key={exIdx} style={{
@@ -264,8 +396,6 @@ export default function Entreno() {
               </div>
               {allDone && <div style={{ fontSize: 11, fontWeight: 700, color: '#FF9F0A' }}>✓ Listo</div>}
             </div>
-
-            {/* Sets */}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const, marginBottom: 12 }}>
               {ex.sets.map((set: any, setIdx: number) => (
                 <div key={setIdx} onClick={() => tapSet(exIdx, setIdx)} style={{
@@ -281,20 +411,11 @@ export default function Entreno() {
                 </div>
               ))}
             </div>
-
-            {/* Weight input */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontSize: 12, color: '#9A9690' }}>Peso:</span>
-              <input
-                type="number"
-                step="2.5"
-                value={ex.weight}
+              <input type="number" step="2.5" value={ex.weight}
                 onChange={e => updateWeight(exIdx, +e.target.value)}
-                style={{
-                  width: 70, padding: '6px 10px', borderRadius: 8, fontSize: 13, fontWeight: 600,
-                  border: '1px solid rgba(0,0,0,0.08)', outline: 'none', background: '#F5F2EE',
-                  fontFamily: '-apple-system, sans-serif', color: '#1A1916',
-                }}
+                style={{ width: 70, padding: '6px 10px', borderRadius: 8, fontSize: 13, fontWeight: 600, border: '1px solid rgba(0,0,0,0.08)', outline: 'none', background: '#F5F2EE', fontFamily: '-apple-system, sans-serif', color: '#1A1916' }}
               />
               <span style={{ fontSize: 12, color: '#9A9690' }}>kg</span>
               {allDone && (
@@ -308,11 +429,17 @@ export default function Entreno() {
       })}
 
       {/* Cardio */}
-      {!day.rest && !day.gym && (
+      {!day.rest && !day.gym && !finished && (
         <div style={{ background: '#FFFFFF', borderRadius: 18, padding: '24px', boxShadow: '0 2px 12px rgba(0,0,0,0.07)', textAlign: 'center' as const }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>🚴</div>
           <div style={{ fontSize: 16, fontWeight: 700, color: '#1A1916', marginBottom: 4 }}>{day.name}</div>
           <div style={{ fontSize: 13, color: '#9A9690' }}>Cardio · Zona 2-3 · 65-75% FC máx · {day.dur} min</div>
+          <div onClick={finishWorkout} style={{
+            marginTop: 16, padding: '12px', borderRadius: 12, cursor: 'pointer',
+            background: '#1A1916', color: '#FFFFFF', fontSize: 13, fontWeight: 700,
+          }}>
+            ✓ Completar cardio
+          </div>
         </div>
       )}
 
@@ -325,8 +452,8 @@ export default function Entreno() {
         </div>
       )}
 
-      {/* Finish button */}
-      {!day.rest && !finished && (
+      {/* Finish */}
+      {!day.rest && !finished && day.gym && (
         <div onClick={finishWorkout} style={{
           marginTop: 16, padding: '15px', borderRadius: 14, cursor: 'pointer',
           background: '#1A1916', color: '#FFFFFF', fontSize: 14, fontWeight: 700,
@@ -338,11 +465,13 @@ export default function Entreno() {
         </div>
       )}
 
-      {finished && (
+      {finished && EXERCISES[WEEK_PLAN[curDay].name] && (
         <div style={{ marginTop: 16, background: 'rgba(48,209,88,0.08)', border: '1.5px solid rgba(48,209,88,0.2)', borderRadius: 14, padding: '16px 20px', textAlign: 'center' as const }}>
           <div style={{ fontSize: 16, fontWeight: 700, color: '#30D158', marginBottom: 4 }}>🎉 ¡Sesión completada!</div>
           <div style={{ fontSize: 12, color: '#6B6762' }}>
-            {exStates.filter(ex => ex.sets.every((s: any) => s.done)).map(ex => `📈 ${ex.name}: ${+(ex.weight + 2.5).toFixed(1)}kg próx semana`).join(' · ')}
+            {exStates.filter(ex => ex.sets.every((s: any) => s.done)).map(ex =>
+              `📈 ${ex.name}: ${+(ex.weight + 2.5).toFixed(1)}kg próx`
+            ).join(' · ')}
           </div>
         </div>
       )}
