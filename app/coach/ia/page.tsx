@@ -348,14 +348,20 @@ export default function CoachIA() {
 
               {/* Result content */}
               <div style={{ padding: '20px 22px' }}>
-                <pre style={{
-                  fontSize: 13, color: '#1A1916', lineHeight: 1.7,
-                  whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                  fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif',
-                  margin: 0, maxHeight: 500, overflowY: 'auto',
-                }}>
-                  {result}
-                </pre>
+                <div style={{
+  fontSize: 13, color: '#1A1916', lineHeight: 1.7,
+  maxHeight: 500, overflowY: 'auto',
+  fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif',
+}}
+  dangerouslySetInnerHTML={{
+    __html: result
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/### (.+)/g, '<div style="font-size:15px;font-weight:800;color:#1A1916;margin:14px 0 6px">$1</div>')
+      .replace(/#### (.+)/g, '<div style="font-size:13px;font-weight:700;color:#FF9F0A;margin:10px 0 4px">$1</div>')
+      .replace(/\n- /g, '<br>• ')
+      .replace(/\n/g, '<br>')
+  }}
+/>
               </div>
 
               {/* Approve / save */}
