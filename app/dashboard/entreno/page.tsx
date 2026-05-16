@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import { Play, Pause, RotateCcw, Check, Plus, X } from 'lucide-react'
+import { Play, Pause, RotateCcw, Check, Plus, ChevronRight } from 'lucide-react'
 import { today, getRealDayIndex } from '@/lib/store'
 
 const WEEK_PLAN = [
@@ -60,6 +60,8 @@ export default function Entreno() {
   const [showFreeActivity, setShowFreeActivity] = useState(false)
   const [freeActivity, setFreeActivity] = useState({ type: 'Running', duration: 30, distance: 0, notes: '' })
   const [savedActivity, setSavedActivity] = useState<any>(null)
+  const [historial, setHistorial] = useState<any[]>([])
+  const [showHistorial, setShowHistorial] = useState(false)
   const timerRef = useRef<any>(null)
   const router = useRouter()
 
@@ -74,7 +76,6 @@ export default function Entreno() {
       setCurDay(realDay)
       initExercises(realDay)
 
-      // Cargar workout del día
       const { data: wlog } = await supabase
         .from('workout_logs').select('*')
         .eq('user_id', data.user.id).eq('date', today()).single()
@@ -82,6 +83,13 @@ export default function Entreno() {
         setFinished(true)
         if (wlog.name && !EXERCISES[wlog.name]) setSavedActivity(wlog)
       }
+
+      const { data: hist } = await supabase
+        .from('workout_logs').select('*')
+        .eq('user_id', data.user.id)
+        .order('date', { ascending: false })
+        .limit(20)
+      setHistorial(hist || [])
     })
   }, [])
 
@@ -96,11 +104,7 @@ export default function Entreno() {
     setSavedActivity(null)
   }
 
-  function selectDay(i: number) {
-    setCurDay(i)
-    initExercises(i)
-    stopTimer()
-  }
+  function selectDay(i: number) { setCurDay(i); initExercises(i); stopTimer() }
 
   function tapSet(exIdx: number, setIdx: number) {
     setExStates(prev => {
@@ -141,12 +145,14 @@ export default function Entreno() {
     const total = exStates.reduce((a, ex) => a + ex.sets.length, 0)
     const cals = Math.round(vol * 0.05 + done * 8)
     const supabase = createClient()
-    await supabase.from('workout_logs').upsert({
+    const row = {
       user_id: userId, date: today(),
       name: WEEK_PLAN[curDay].name,
       volume: vol, sets_done: done, sets_total: total, rpe: 7,
       calories_burned: cals,
-    }, { onConflict: 'user_id,date' })
+    }
+    await supabase.from('workout_logs').upsert(row, { onConflict: 'user_id,date' })
+    setHistorial(prev => [row, ...prev.filter(h => h.date !== today())])
     stopTimer()
     setFinished(true)
   }
@@ -155,13 +161,15 @@ export default function Entreno() {
     const act = ACTIVITY_TYPES.find(a => a.name === freeActivity.type)
     const cals = Math.round((act?.calsPerMin || 7) * freeActivity.duration)
     const supabase = createClient()
-    await supabase.from('workout_logs').upsert({
+    const row = {
       user_id: userId, date: today(),
       name: freeActivity.type,
       volume: 0, sets_done: 0, sets_total: 0, rpe: 7,
       calories_burned: cals,
       completed_sets: { duration: freeActivity.duration, distance: freeActivity.distance, notes: freeActivity.notes },
-    }, { onConflict: 'user_id,date' })
+    }
+    await supabase.from('workout_logs').upsert(row, { onConflict: 'user_id,date' })
+    setHistorial(prev => [row, ...prev.filter(h => h.date !== today())])
     setSavedActivity({ name: freeActivity.type, calories_burned: cals, duration: freeActivity.duration })
     setShowFreeActivity(false)
     setFinished(true)
@@ -173,9 +181,7 @@ export default function Entreno() {
   const realDayIdx = getRealDayIndex()
 
   if (!profile) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100dvh', color: '#9A9690', fontSize: 14 }}>
-      Cargando...
-    </div>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100dvh', color: '#9A9690', fontSize: 14 }}>Cargando...</div>
   )
 
   return (
@@ -189,7 +195,7 @@ export default function Entreno() {
         </div>
       </div>
 
-      {/* Week pills — con día real marcado */}
+      {/* Week pills */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 20, overflowX: 'auto' as const, paddingBottom: 4 }}>
         {WEEK_PLAN.map((d, i) => {
           const isToday = i === realDayIdx
@@ -214,25 +220,18 @@ export default function Entreno() {
 
       {/* Actividad libre */}
       {!finished && (
-        <div
-          onClick={() => setShowFreeActivity(!showFreeActivity)}
-          style={{
-            background: showFreeActivity ? '#1A1916' : '#FFFFFF',
-            borderRadius: 14, padding: '12px 16px', marginBottom: 16,
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
-            border: '1.5px solid rgba(0,0,0,0.06)',
-          }}
-        >
+        <div onClick={() => setShowFreeActivity(!showFreeActivity)} style={{
+          background: showFreeActivity ? '#1A1916' : '#FFFFFF',
+          borderRadius: 14, padding: '12px 16px', marginBottom: 16,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+          border: '1.5px solid rgba(0,0,0,0.06)',
+        }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <Plus size={16} color={showFreeActivity ? '#FF9F0A' : '#1A1916'} strokeWidth={2.5} />
-            <span style={{ fontSize: 13, fontWeight: 600, color: showFreeActivity ? '#FFFFFF' : '#1A1916' }}>
-              Registrar otra actividad
-            </span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: showFreeActivity ? '#FFFFFF' : '#1A1916' }}>Registrar otra actividad</span>
           </div>
-          <span style={{ fontSize: 11, color: showFreeActivity ? 'rgba(255,255,255,0.4)' : '#9A9690' }}>
-            yoga, running, pádel...
-          </span>
+          <span style={{ fontSize: 11, color: showFreeActivity ? 'rgba(255,255,255,0.4)' : '#9A9690' }}>yoga, running, pádel...</span>
         </div>
       )}
 
@@ -240,8 +239,6 @@ export default function Entreno() {
       {showFreeActivity && (
         <div style={{ background: '#FFFFFF', borderRadius: 18, padding: '20px', marginBottom: 16, boxShadow: '0 2px 12px rgba(0,0,0,0.07)' }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: '#1A1916', marginBottom: 14 }}>¿Qué hiciste hoy?</div>
-
-          {/* Activity type */}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const, marginBottom: 16 }}>
             {ACTIVITY_TYPES.map((a, i) => (
               <div key={i} onClick={() => setFreeActivity(f => ({ ...f, type: a.name }))} style={{
@@ -255,46 +252,34 @@ export default function Entreno() {
               </div>
             ))}
           </div>
-
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 600, color: '#9A9690', textTransform: 'uppercase' as const, letterSpacing: 0.4, marginBottom: 6 }}>Duración (min)</div>
-              <input type="number" value={freeActivity.duration}
-                onChange={e => setFreeActivity(f => ({ ...f, duration: +e.target.value }))}
-                style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1.5px solid rgba(0,0,0,0.08)', fontSize: 15, fontWeight: 700, outline: 'none', background: '#F5F2EE', color: '#1A1916', fontFamily: '-apple-system, sans-serif' }}
-              />
-            </div>
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 600, color: '#9A9690', textTransform: 'uppercase' as const, letterSpacing: 0.4, marginBottom: 6 }}>Distancia (km)</div>
-              <input type="number" step="0.1" value={freeActivity.distance}
-                onChange={e => setFreeActivity(f => ({ ...f, distance: +e.target.value }))}
-                style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1.5px solid rgba(0,0,0,0.08)', fontSize: 15, fontWeight: 700, outline: 'none', background: '#F5F2EE', color: '#1A1916', fontFamily: '-apple-system, sans-serif' }}
-              />
-            </div>
+            {[
+              { label: 'Duración (min)', key: 'duration', step: 1 },
+              { label: 'Distancia (km)', key: 'distance', step: 0.1 },
+            ].map(({ label, key, step }) => (
+              <div key={key}>
+                <div style={{ fontSize: 10, fontWeight: 600, color: '#9A9690', textTransform: 'uppercase' as const, letterSpacing: 0.4, marginBottom: 6 }}>{label}</div>
+                <input type="number" step={step} value={(freeActivity as any)[key]}
+                  onChange={e => setFreeActivity(f => ({ ...f, [key]: +e.target.value }))}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1.5px solid rgba(0,0,0,0.08)', fontSize: 15, fontWeight: 700, outline: 'none', background: '#F5F2EE', color: '#1A1916', fontFamily: '-apple-system, sans-serif' }}
+                />
+              </div>
+            ))}
           </div>
-
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontSize: 10, fontWeight: 600, color: '#9A9690', textTransform: 'uppercase' as const, letterSpacing: 0.4, marginBottom: 6 }}>Notas (opcional)</div>
-            <input value={freeActivity.notes}
-              onChange={e => setFreeActivity(f => ({ ...f, notes: e.target.value }))}
+            <input value={freeActivity.notes} onChange={e => setFreeActivity(f => ({ ...f, notes: e.target.value }))}
               placeholder="ej. buena sesión, sentí energía..."
               style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1.5px solid rgba(0,0,0,0.08)', fontSize: 13, outline: 'none', background: '#F5F2EE', color: '#1A1916', fontFamily: '-apple-system, sans-serif' }}
             />
           </div>
-
-          {/* Estimated cals */}
           <div style={{ background: '#F5F2EE', borderRadius: 10, padding: '10px 14px', marginBottom: 14, display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 12, color: '#6B6762' }}>Calorías estimadas quemadas:</span>
+            <span style={{ fontSize: 12, color: '#6B6762' }}>Calorías estimadas:</span>
             <span style={{ fontSize: 14, fontWeight: 700, color: '#FF9F0A' }}>
               ~{Math.round((ACTIVITY_TYPES.find(a => a.name === freeActivity.type)?.calsPerMin || 7) * freeActivity.duration)} kcal
             </span>
           </div>
-
-          <div onClick={saveFreeActivity} style={{
-            padding: '13px', borderRadius: 12, cursor: 'pointer',
-            background: '#FF9F0A', fontSize: 13, fontWeight: 700,
-            color: '#FFFFFF', textAlign: 'center' as const,
-          }}>
+          <div onClick={saveFreeActivity} style={{ padding: '13px', borderRadius: 12, cursor: 'pointer', background: '#FF9F0A', fontSize: 13, fontWeight: 700, color: '#FFFFFF', textAlign: 'center' as const }}>
             ✓ Guardar actividad
           </div>
         </div>
@@ -303,12 +288,8 @@ export default function Entreno() {
       {/* Saved free activity */}
       {savedActivity && !EXERCISES[savedActivity.name] && (
         <div style={{ background: 'rgba(48,209,88,0.08)', border: '1.5px solid rgba(48,209,88,0.2)', borderRadius: 14, padding: '16px 20px', marginBottom: 16 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: '#30D158', marginBottom: 4 }}>
-            ✓ {savedActivity.name} registrado
-          </div>
-          <div style={{ fontSize: 12, color: '#6B6762' }}>
-            {savedActivity.duration || freeActivity.duration} min · ~{savedActivity.calories_burned} kcal quemadas
-          </div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: '#30D158', marginBottom: 4 }}>✓ {savedActivity.name} registrado</div>
+          <div style={{ fontSize: 12, color: '#6B6762' }}>{savedActivity.duration || freeActivity.duration} min · ~{savedActivity.calories_burned} kcal quemadas</div>
         </div>
       )}
 
@@ -320,17 +301,13 @@ export default function Entreno() {
             <div style={{ fontSize: 20, fontWeight: 700, color: '#1A1916' }}>{day.name}</div>
             <div style={{ fontSize: 12, color: '#9A9690', marginTop: 2 }}>{day.rest ? 'Descanso' : `~${day.dur} min`}</div>
           </div>
-          {finished && (
-            <div style={{ background: '#30D158', borderRadius: 10, padding: '6px 12px', fontSize: 12, fontWeight: 700, color: '#FFFFFF' }}>✓ Completado</div>
-          )}
+          {finished && <div style={{ background: '#30D158', borderRadius: 10, padding: '6px 12px', fontSize: 12, fontWeight: 700, color: '#FFFFFF' }}>✓ Completado</div>}
         </div>
 
         {/* Timer */}
         {!day.rest && !finished && (
           <div style={{ background: '#F5F2EE', borderRadius: 14, padding: '16px', marginBottom: 16 }}>
-            <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: 0.5, color: '#9A9690', textAlign: 'center' as const, marginBottom: 10 }}>
-              Descanso entre series
-            </div>
+            <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: 0.5, color: '#9A9690', textAlign: 'center' as const, marginBottom: 10 }}>Descanso entre series</div>
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
               <div style={{ position: 'relative', width: 80, height: 80 }}>
                 <svg width="80" height="80" style={{ transform: 'rotate(-90deg)' }}>
@@ -363,11 +340,7 @@ export default function Entreno() {
               ))}
             </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
-              <div onClick={timerOn ? stopTimer : startTimer} style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '9px 20px', borderRadius: 10, cursor: 'pointer',
-                background: '#1A1916', color: '#FFFFFF', fontSize: 13, fontWeight: 600,
-              }}>
+              <div onClick={timerOn ? stopTimer : startTimer} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 20px', borderRadius: 10, cursor: 'pointer', background: '#1A1916', color: '#FFFFFF', fontSize: 13, fontWeight: 600 }}>
                 {timerOn ? <Pause size={14} /> : <Play size={14} />}
                 {timerOn ? 'Pausar' : 'Iniciar'}
               </div>
@@ -434,10 +407,7 @@ export default function Entreno() {
           <div style={{ fontSize: 40, marginBottom: 12 }}>🚴</div>
           <div style={{ fontSize: 16, fontWeight: 700, color: '#1A1916', marginBottom: 4 }}>{day.name}</div>
           <div style={{ fontSize: 13, color: '#9A9690' }}>Cardio · Zona 2-3 · 65-75% FC máx · {day.dur} min</div>
-          <div onClick={finishWorkout} style={{
-            marginTop: 16, padding: '12px', borderRadius: 12, cursor: 'pointer',
-            background: '#1A1916', color: '#FFFFFF', fontSize: 13, fontWeight: 700,
-          }}>
+          <div onClick={finishWorkout} style={{ marginTop: 16, padding: '12px', borderRadius: 12, cursor: 'pointer', background: '#1A1916', color: '#FFFFFF', fontSize: 13, fontWeight: 700 }}>
             ✓ Completar cardio
           </div>
         </div>
@@ -452,7 +422,7 @@ export default function Entreno() {
         </div>
       )}
 
-      {/* Finish */}
+      {/* Finish button */}
       {!day.rest && !finished && day.gym && (
         <div onClick={finishWorkout} style={{
           marginTop: 16, padding: '15px', borderRadius: 14, cursor: 'pointer',
@@ -475,6 +445,79 @@ export default function Entreno() {
           </div>
         </div>
       )}
+
+      {/* HISTORIAL */}
+      <div style={{ marginTop: 24 }}>
+        <div onClick={() => setShowHistorial(!showHistorial)} style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '14px 18px', borderRadius: 14, cursor: 'pointer',
+          background: '#FFFFFF', boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+          border: '1px solid rgba(0,0,0,0.06)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 30, height: 30, borderRadius: 8, background: '#F5F2EE', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <RotateCcw size={14} color="#FF9F0A" strokeWidth={2.5} />
+            </div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#1A1916' }}>Historial de entrenos</div>
+              <div style={{ fontSize: 11, color: '#9A9690' }}>{historial.length} sesiones registradas</div>
+            </div>
+          </div>
+          <ChevronRight size={16} color="#9A9690"
+            style={{ transform: showHistorial ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />
+        </div>
+
+        {showHistorial && (
+          <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {historial.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '32px', color: '#9A9690', fontSize: 13, background: '#FFFFFF', borderRadius: 14 }}>
+                No hay sesiones registradas aún
+              </div>
+            ) : historial.map((w, i) => {
+              const isToday = w.date === today()
+              const isGym = !!EXERCISES[w.name]
+              return (
+                <div key={i} style={{
+                  background: '#FFFFFF', borderRadius: 14, padding: '14px 18px',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
+                  border: isToday ? '1.5px solid #FF9F0A' : '1px solid rgba(0,0,0,0.06)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{
+                      width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+                      background: isGym ? 'rgba(255,159,10,0.1)' : 'rgba(10,132,255,0.1)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16,
+                    }}>
+                      {isGym ? '🏋️' : '🏃'}
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: '#1A1916' }}>
+                        {w.name}
+                        {isToday && <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 700, color: '#FF9F0A', background: 'rgba(255,159,10,0.1)', padding: '2px 6px', borderRadius: 4 }}>HOY</span>}
+                      </div>
+                      <div style={{ fontSize: 11, color: '#9A9690', marginTop: 2 }}>
+                        {w.date} · {w.calories_burned ? w.calories_burned + ' kcal' : '—'}
+                        {w.sets_done && w.sets_total ? ` · ${w.sets_done}/${w.sets_total} series` : ''}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' as const }}>
+                    {w.volume > 0 && (
+                      <div style={{ fontSize: 13, fontWeight: 800, color: '#1A1916' }}>
+                        {w.volume.toLocaleString()}
+                        <span style={{ fontSize: 9, fontWeight: 500, color: '#9A9690', marginLeft: 2 }}>kg vol</span>
+                      </div>
+                    )}
+                    {w.rpe && <div style={{ fontSize: 10, color: '#9A9690', marginTop: 2 }}>RPE {w.rpe}/10</div>}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
     </div>
   )
 }
