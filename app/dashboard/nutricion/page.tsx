@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import { Check, RefreshCw, ShoppingCart } from 'lucide-react'
+import { Check, RefreshCw, ShoppingCart, Sparkles } from 'lucide-react'
 
 const WEEK_PLAN = [
   { day: 'Lun', gym: true, rest: false },
@@ -101,6 +101,8 @@ export default function Nutricion() {
   const [substitutions, setSubstitutions] = useState<Record<string, any>>({})
   const [showSubs, setShowSubs] = useState<string | null>(null)
   const [showShoppingList, setShowShoppingList] = useState(false)
+  const [aiSubLoading, setAiSubLoading] = useState<string | null>(null)
+  const [aiSuggestions, setAiSuggestions] = useState<Record<string, any[]>>({})
   const [loading, setLoading] = useState(true)
   const [userId, setUserId] = useState('')
   const router = useRouter()
@@ -139,6 +141,7 @@ export default function Nutricion() {
     setSubstitutions(newSubs)
     setChecks(newChecks)
     setShowSubs(null)
+    setAiSuggestions(prev => { const n = { ...prev }; delete n[key]; return n })
     const supabase = createClient()
     await supabase.from('daily_logs').upsert(
       { user_id: userId, date: today(), checks: newChecks, substitutions: newSubs },
@@ -156,6 +159,40 @@ export default function Nutricion() {
       { user_id: userId, date: today(), checks, substitutions: newSubs },
       { onConflict: 'user_id,date' }
     )
+  }
+
+  async function getAISubstitutes(mealId: string, idx: number, item: any) {
+    const key = `${mealId}_${idx}`
+    setAiSubLoading(key)
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1000,
+          messages: [{
+            role: 'user',
+            content: `Eres un nutriólogo experto en México. El usuario no tiene "${item.name}" (${item.cal} kcal, P:${item.p}g C:${item.c}g G:${item.f}g).
+
+Perfil: ${profile?.sex === 'F' ? 'Mujer' : 'Hombre'}, objetivo: bajar a ${profile?.goal_weight}kg, nivel: ${profile?.level}${profile?.injuries ? ', lesiones: ' + profile.injuries : ''}.
+
+Sugiere 3 sustitutos fáciles de conseguir en México con macros similares.
+
+Responde SOLO con JSON válido sin texto extra ni markdown:
+[{"name":"nombre","cal":número,"p":número,"c":número,"f":número,"g":"cantidad","reason":"razón breve"}]`
+          }]
+        })
+      })
+      const data = await response.json()
+      const text = data.content?.[0]?.text || '[]'
+      const clean = text.replace(/```json|```/g, '').trim()
+      const suggestions = JSON.parse(clean)
+      setAiSuggestions(prev => ({ ...prev, [key]: suggestions }))
+    } catch (e) {
+      console.error(e)
+    }
+    setAiSubLoading(null)
   }
 
   function calcTotals() {
@@ -233,7 +270,7 @@ export default function Nutricion() {
       {/* Shopping list */}
       {showShoppingList && (
         <div style={{ background: '#FFFFFF', borderRadius: 18, padding: '20px', marginBottom: 16, boxShadow: '0 2px 12px rgba(0,0,0,0.07)' }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: '#1A1916', marginBottom: 14 }}>🛒 Lista de compras semanal</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#1A1916', marginBottom: 14 }}>🛒 Lista de compras</div>
           {shoppingList.map((item, i) => (
             <div key={i} style={{
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -324,7 +361,6 @@ export default function Nutricion() {
             border: `1.5px solid ${allDone ? '#FF9F0A' : 'transparent'}`,
             transition: 'border-color 0.3s',
           }}>
-            {/* Meal header */}
             <div style={{
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
               padding: '14px 18px',
@@ -341,7 +377,6 @@ export default function Nutricion() {
               </div>
             </div>
 
-            {/* Items */}
             <div style={{ padding: '4px 0' }}>
               {meal.items.map((item: any, idx: number) => {
                 const key = `${meal.id}_${idx}`
@@ -349,17 +384,16 @@ export default function Nutricion() {
                 const sub = substitutions[key]
                 const hasSubs = !!SUBSTITUTES[item.name]
                 const showSubsFor = showSubs === key
+                const aiLoading = aiSubLoading === key
+                const aiSugs = aiSuggestions[key]
 
                 return (
                   <div key={idx} style={{
                     borderBottom: idx < meal.items.length - 1 ? '1px solid rgba(0,0,0,0.04)' : 'none',
                   }}>
-                    {/* Main item row */}
+                    {/* Main row */}
                     <div
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 12,
-                        padding: '11px 18px', cursor: 'pointer', transition: 'background 0.15s',
-                      }}
+                      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 18px', cursor: 'pointer', transition: 'background 0.15s' }}
                       onClick={() => toggleCheck(meal.id, idx)}
                       onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = '#FAFAF8'}
                       onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
@@ -374,11 +408,7 @@ export default function Nutricion() {
                         {done && <Check size={12} color="#FFFFFF" strokeWidth={3} />}
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{
-                          fontSize: 13, fontWeight: 500,
-                          color: done ? '#B0ACA8' : '#1A1916',
-                          textDecoration: done && !sub ? 'line-through' : 'none',
-                        }}>
+                        <div style={{ fontSize: 13, fontWeight: 500, color: done ? '#B0ACA8' : '#1A1916', textDecoration: done && !sub ? 'line-through' : 'none' }}>
                           {sub ? (
                             <span>
                               <span style={{ textDecoration: 'line-through', color: '#B0ACA8', fontSize: 11 }}>{item.name}</span>
@@ -395,59 +425,102 @@ export default function Nutricion() {
                       </div>
                     </div>
 
-                    {/* Substitute button */}
-                    {hasSubs && (
-                      <div style={{ paddingLeft: 52, paddingRight: 18, paddingBottom: 8 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {/* Substitute controls */}
+                    <div style={{ paddingLeft: 52, paddingRight: 18, paddingBottom: 10 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' as const }}>
+
+                        {/* Manual subs button */}
+                        {hasSubs && (
                           <div
                             onClick={() => setShowSubs(showSubsFor ? null : key)}
                             style={{
                               display: 'inline-flex', alignItems: 'center', gap: 4,
                               fontSize: 11, color: '#0A84FF', fontWeight: 600,
-                              cursor: 'pointer', padding: '3px 8px',
+                              cursor: 'pointer', padding: '4px 8px',
                               background: 'rgba(10,132,255,0.06)', borderRadius: 6,
                             }}
                           >
                             <RefreshCw size={10} strokeWidth={2.5} />
-                            {sub ? 'Cambiar sustituto' : 'No tengo esto'}
+                            {sub ? 'Cambiar' : 'Sustituir'}
                           </div>
-                          {sub && (
-                            <div
-                              onClick={() => clearSubstitute(meal.id, idx)}
-                              style={{ fontSize: 11, color: '#9A9690', cursor: 'pointer', padding: '3px 8px' }}
-                            >
-                              Restaurar original
-                            </div>
-                          )}
+                        )}
+
+                        {/* AI button — siempre visible */}
+                        <div
+                          onClick={() => !aiLoading && getAISubstitutes(meal.id, idx, item)}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                            fontSize: 11, color: '#BF5AF2', fontWeight: 600,
+                            cursor: aiLoading ? 'default' : 'pointer', padding: '4px 8px',
+                            background: 'rgba(191,90,242,0.06)', borderRadius: 6,
+                            opacity: aiLoading ? 0.6 : 1,
+                          }}
+                        >
+                          <Sparkles size={10} strokeWidth={2.5} />
+                          {aiLoading ? 'Buscando...' : '¿No tienes esto?'}
                         </div>
 
-                        {/* Substitutes list */}
-                        {showSubsFor && (
-                          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column' as const, gap: 6 }}>
-                            {SUBSTITUTES[item.name].map((s, si) => (
-                              <div
-                                key={si}
-                                onClick={() => applySubstitute(meal.id, idx, s)}
-                                style={{
-                                  padding: '9px 12px', borderRadius: 10, cursor: 'pointer',
-                                  background: '#F5F2EE', border: '1px solid rgba(0,0,0,0.06)',
-                                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                                  transition: 'all 0.15s',
-                                }}
-                                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = '#EDEAE6'}
-                                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = '#F5F2EE'}
-                              >
-                                <div>
-                                  <div style={{ fontSize: 12, fontWeight: 600, color: '#1A1916' }}>{s.name}</div>
-                                  <div style={{ fontSize: 10, color: '#9A9690' }}>{s.g} · P:{s.p}g C:{s.c}g G:{s.f}g</div>
-                                </div>
-                                <div style={{ fontSize: 12, fontWeight: 700, color: '#FF9F0A' }}>{s.cal} kcal</div>
-                              </div>
-                            ))}
+                        {sub && (
+                          <div
+                            onClick={() => clearSubstitute(meal.id, idx)}
+                            style={{ fontSize: 11, color: '#9A9690', cursor: 'pointer', padding: '4px 8px' }}
+                          >
+                            Restaurar
                           </div>
                         )}
                       </div>
-                    )}
+
+                      {/* Manual subs list */}
+                      {showSubsFor && hasSubs && (
+                        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column' as const, gap: 6 }}>
+                          {SUBSTITUTES[item.name].map((s, si) => (
+                            <div key={si} onClick={() => applySubstitute(meal.id, idx, s)} style={{
+                              padding: '9px 12px', borderRadius: 10, cursor: 'pointer',
+                              background: '#F5F2EE', border: '1px solid rgba(0,0,0,0.06)',
+                              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                            }}
+                              onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = '#EDEAE6'}
+                              onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = '#F5F2EE'}
+                            >
+                              <div>
+                                <div style={{ fontSize: 12, fontWeight: 600, color: '#1A1916' }}>{s.name}</div>
+                                <div style={{ fontSize: 10, color: '#9A9690' }}>{s.g} · P:{s.p}g C:{s.c}g G:{s.f}g</div>
+                              </div>
+                              <div style={{ fontSize: 12, fontWeight: 700, color: '#FF9F0A' }}>{s.cal} kcal</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* AI suggestions */}
+                      {aiSugs?.length > 0 && (
+                        <div style={{ marginTop: 8 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: '#BF5AF2', textTransform: 'uppercase' as const, letterSpacing: 0.4, marginBottom: 6 }}>
+                            ✨ Sugerencias IA
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 6 }}>
+                            {aiSugs.map((s: any, si: number) => (
+                              <div key={si} onClick={() => applySubstitute(meal.id, idx, s)} style={{
+                                padding: '10px 12px', borderRadius: 10, cursor: 'pointer',
+                                background: 'rgba(191,90,242,0.04)',
+                                border: '1px solid rgba(191,90,242,0.15)',
+                                display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+                              }}
+                                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(191,90,242,0.08)'}
+                                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'rgba(191,90,242,0.04)'}
+                              >
+                                <div style={{ flex: 1 }}>
+                                  <div style={{ fontSize: 12, fontWeight: 600, color: '#1A1916' }}>{s.name}</div>
+                                  <div style={{ fontSize: 10, color: '#9A9690' }}>{s.g} · P:{s.p}g C:{s.c}g G:{s.f}g</div>
+                                  {s.reason && <div style={{ fontSize: 10, color: '#BF5AF2', marginTop: 2 }}>{s.reason}</div>}
+                                </div>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: '#FF9F0A', marginLeft: 8, flexShrink: 0 }}>{s.cal} kcal</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )
               })}
