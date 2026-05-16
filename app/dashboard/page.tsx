@@ -27,7 +27,7 @@ const WEEK_PLAN_PAOLA = [
 ]
 
 const CHECKLIST_MATHIAS = [
-  'Kéfir + agua con limón en ayunas (antes 6:30am)',
+  'Kéfir + agua con limón en ayunas (antes 7:30am)',
   'Jugo verde preparado y tomado',
   'Desayuno registrado en app ANTES de comer',
   'Toda la proteína pesada en báscula',
