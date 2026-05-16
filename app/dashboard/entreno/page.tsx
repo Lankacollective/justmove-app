@@ -155,6 +155,7 @@ export default function Entreno() {
     setHistorial(prev => [row, ...prev.filter(h => h.date !== today())])
     stopTimer()
     setFinished(true)
+    router.refresh()
   }
 
   async function saveFreeActivity() {
@@ -173,6 +174,7 @@ export default function Entreno() {
     setSavedActivity({ name: freeActivity.type, calories_burned: cals, duration: freeActivity.duration })
     setShowFreeActivity(false)
     setFinished(true)
+    router.refresh()
   }
 
   const day = WEEK_PLAN[curDay]
